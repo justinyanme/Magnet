@@ -18,6 +18,7 @@ public final class HotKeyCenter {
     fileprivate var hotKeyCount: UInt32 = 0
 
     fileprivate var tappedModifierKey = NSEvent.ModifierFlags(rawValue: 0)
+    fileprivate var tappedNormalKey = false
     fileprivate var multiModifiers = false
 
     // MARK: - Initialize
@@ -113,6 +114,18 @@ private extension HotKeyCenter {
         InstallEventHandler(GetEventDispatcherTarget(), { (_, inEvent, _) -> OSStatus in
             return HotKeyCenter.shared.sendCarbonEvent(inEvent!)
         }, 1, &pressedEventType, nil, nil)
+        
+        // Keydown Event
+        let kdEvent = CGEvent.tapCreate(tap: .cghidEventTap,
+                                     place: .headInsertEventTap,
+                                     options: .listenOnly,
+                                     eventsOfInterest: CGEventMask((1 << CGEventType.keyDown.rawValue)),
+                                     callback: { (_, _, event, _) in return HotKeyCenter.shared.sendKeyDownEvent(event) },
+                                     userInfo: nil)
+        if kdEvent == nil { return }
+        let kdSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, kdEvent!, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), kdSource, CFRunLoopMode.commonModes)
+        CGEvent.tapEnable(tap: kdEvent!, enable: true)
 
         // Press Modifiers Event
         let mask = CGEventMask((1 << CGEventType.flagsChanged.rawValue))
@@ -165,6 +178,12 @@ private extension HotKeyCenter {
 
 // MARK: - Double Tap Modifier Event
 private extension HotKeyCenter {
+    func sendKeyDownEvent(_ event: CGEvent) -> Unmanaged<CGEvent>? {
+//        NSLog("xxx keycode: \(event.getIntegerValueField(.keyboardEventKeycode))")
+        tappedNormalKey = true
+        return Unmanaged.passUnretained(event)
+    }
+    
     func sendModifiersEvent(_ event: CGEvent) -> Unmanaged<CGEvent>? {
         let flags = event.flags
 
@@ -189,6 +208,7 @@ private extension HotKeyCenter {
             (tappedModifierKey.contains(.shift) && shiftTapped)    ||
             (tappedModifierKey.contains(.control) && controlTapped) ||
             (tappedModifierKey.contains(.option) && altTapped) {
+            if tappedNormalKey { return Unmanaged.passUnretained(event) }
             doubleTapped(with: KeyTransformer.carbonFlags(from: tappedModifierKey))
             tappedModifierKey = NSEvent.ModifierFlags(rawValue: 0)
         } else {
@@ -210,6 +230,7 @@ private extension HotKeyCenter {
         let time  = DispatchTime.now() + Double(Int64(delay)) / Double(NSEC_PER_SEC)
         DispatchQueue.main.asyncAfter(deadline: time, execute: { [weak self] in
             self?.tappedModifierKey = NSEvent.ModifierFlags(rawValue: 0)
+            self?.tappedNormalKey = false
         })
 
         return Unmanaged.passUnretained(event)
